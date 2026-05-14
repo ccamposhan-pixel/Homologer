@@ -14,7 +14,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from clinical_homologation.enrichment import read_table
-from clinical_homologation.pipeline import DEFAULT_MAPPING, export_workbook, process_products, resolve_mapping
+from clinical_homologation.pipeline import DEFAULT_MAPPING, export_workbook, process_products, refine_mapping_with_data, resolve_mapping
 
 
 ROOT = Path(__file__).resolve().parent
@@ -183,8 +183,14 @@ class Handler(BaseHTTPRequestHandler):
             if products is None:
                 self.respond(page("Archivo requerido", "<section><p class='warn'>Carga una base de productos Excel o CSV.</p><a class='button secondary' href='/'>Volver</a></section>"), status=400)
                 return
-            product_columns = list(read_table(products).columns)
+            product_df = read_table(products)
+            product_columns = list(product_df.columns)
             detected = resolve_mapping(product_columns)
+            # Prefer clinic-specific codes (e.g. "ID" with clinic prefix) when available.
+            try:
+                detected = refine_mapping_with_data(product_df, detected)
+            except Exception:
+                pass
             vademecum_columns = list(read_table(vademecum).columns) if vademecum is not None else []
             self.respond(page("Configurar columnas", mapping_form(products, vademecum, historicos, product_columns, detected, vademecum_columns)))
         except Exception:

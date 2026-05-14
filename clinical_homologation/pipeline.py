@@ -93,6 +93,70 @@ def resolve_mapping(columns: list[str], user_mapping: Mapping[str, str] | None =
     return mapping
 
 
+def refine_mapping_with_data(product_df: pd.DataFrame, mapping: Mapping[str, str | None]) -> dict[str, str | None]:
+    """
+    Heuristica: cuando existen varias columnas "tipo codigo" (p.ej. ID, CODIGO_PRODUCTO),
+    elegir la mas probable como codigo local por clinica.
+
+    Preferimos falsos negativos antes que perder trazabilidad; por eso, si una columna
+    parece "corporativa" (mismo codigo repetido en multiples clinicas) y existe otra
+    mas especifica/alfanumerica, preferimos la especifica.
+    """
+    mapping = dict(mapping)
+    clinic_col = mapping.get("clinica")
+    if not clinic_col or clinic_col not in product_df.columns:
+        return mapping
+
+    current = mapping.get("codigo_origen")
+    candidates: list[str] = []
+    if current and current in product_df.columns:
+        candidates.append(current)
+
+    for alias in [
+        "ID",
+        "IDCLIN",
+        "CODIGO_PRODUCTO",
+        "CODIGO PRODUCTO",
+        "CODIGO",
+        "COD",
+        "SKU",
+        "CODIGO_INTERNO",
+        "CODIGO ORIGEN",
+    ]:
+        col = _find_column(list(product_df.columns), [alias])
+        if col and col in product_df.columns and col not in candidates:
+            candidates.append(col)
+
+    if not candidates:
+        return mapping
+
+    df = product_df[[clinic_col] + candidates].copy()
+    df[clinic_col] = df[clinic_col].fillna("").map(lambda x: normalize_text(x))
+
+    def score(col: str) -> float:
+        series = df[col].fillna("").astype(str).map(lambda x: x.strip())
+        non_empty = (series != "").mean() if len(series) else 0.0
+
+        non_empty_series = series[series != ""]
+        nunique = non_empty_series.nunique(dropna=True)
+        uniq_ratio = nunique / max(len(non_empty_series), 1)
+
+        alpha_ratio = non_empty_series.map(lambda x: bool(re.search(r"[A-Z]", normalize_text(x)))).mean() if len(non_empty_series) else 0.0
+
+        # Penaliza codigos que se repiten en multiples clinicas (suele ser "codigo corporativo", no local).
+        tmp = pd.DataFrame({"clinica": df[clinic_col], "codigo": series})
+        tmp = tmp[tmp["codigo"] != ""]
+        overlap = 1.0
+        if not tmp.empty:
+            clinics_per_code = tmp.groupby("codigo")["clinica"].nunique()
+            overlap = float((clinics_per_code > 1).mean())
+
+        return 0.35 * non_empty + 0.35 * uniq_ratio + 0.2 * alpha_ratio + 0.1 * (1.0 - overlap)
+
+    mapping["codigo_origen"] = max(candidates, key=score)
+    return mapping
+
+
 def process_products(
     product_path_or_file,
     vademecum_path_or_file=None,
@@ -109,6 +173,7 @@ def process_products(
     product_df = read_table(product_path_or_file)
     report(12, "Resolviendo mapeo de columnas")
     mapping = resolve_mapping(list(product_df.columns), column_mapping)
+    mapping = refine_mapping_with_data(product_df, mapping)
     report(18, "Cargando vademecum local")
     vademecum = load_vademecum(vademecum_path_or_file, vademecum_mapping) if vademecum_path_or_file else pd.DataFrame()
     report(21, "Leyendo homologaciones historicas auxiliares")
