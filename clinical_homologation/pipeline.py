@@ -40,7 +40,7 @@ from .rules import ALERT_TERMS, RULE_DESCRIPTIONS
 DEFAULT_MAPPING = {
     "clinica": ["clinica", "clínica", "sucursal", "centro", "establecimiento"],
     "codigo_origen": ["codigo producto", "codigo", "cod", "sku", "codigo interno", "codigo_origen"],
-    "descripcion_origen": ["descripcion producto", "descripcion", "producto", "glosa", "nombre"],
+    "descripcion_origen": ["descripcion producto", "descripcion", "producto", "glosa", "nombre producto", "nombre_producto", "nombre"],
     "proveedor": ["proveedor"],
     "marca": ["marca"],
     "laboratorio_titular": ["laboratorio", "titular"],
@@ -60,6 +60,21 @@ def _find_column(columns: list[str], aliases: list[str]) -> str | None:
         key = normalize_text(alias).replace("_", " ")
         if key in normalized:
             return normalized[key]
+    # Fallback: partial match (e.g. "NOMBRE PRODUCTO" should match alias "NOMBRE")
+    for alias in aliases:
+        key = normalize_text(alias).replace("_", " ")
+        if not key:
+            continue
+        candidates = [
+            original
+            for norm, original in normalized.items()
+            if re.search(rf"\\b{re.escape(key)}\\b", norm)
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            # Prefer the shortest column name to reduce accidental over-matches.
+            return sorted(candidates, key=lambda value: len(value))[0]
     return None
 
 
@@ -459,6 +474,7 @@ def build_workbook_frames(records, proposals=None, vademecum=None, brand_diction
     alertas = pd.DataFrame(alert_rows, columns=["clinica", "codigo_local", "descripcion_local", "tipo_alerta", "motivo"])
     insumo_frames = build_insumo_frames(insumo_records)
     resumen = build_multiclinic_summary(records, codigos_madre, homologacion, revision_qf, revision_logistica, no_homologar, insumo_frames)
+    matriz_clinicas = build_homologation_matrix(homologacion, insumo_frames.get("HOMOLOGACION_INSUMOS", pd.DataFrame()))
     frames = {
         "CODIGOS_MADRE": codigos_madre,
         "HOMOLOGACION_MULTICLINICA": homologacion,
@@ -467,11 +483,73 @@ def build_workbook_frames(records, proposals=None, vademecum=None, brand_diction
         "NO_HOMOLOGAR": no_homologar,
         "DICCIONARIO_MARCAS": diccionario,
         "ALERTAS": alertas,
+        "MATRIZ_HOMOLOGADOS_CLINICAS": matriz_clinicas,
         "RESUMEN": resumen,
     }
     frames.update(historical_frames)
     frames.update(insumo_frames)
     return frames
+
+
+def build_homologation_matrix(homologacion: pd.DataFrame, homologacion_insumos: pd.DataFrame) -> pd.DataFrame:
+    """
+    Matriz multiclinica para revision: una fila por codigo madre, con columnas COD/DESC por clinica.
+
+    Nota: si una clinica tiene mas de un codigo local dentro del mismo codigo madre, se concatenan.
+    """
+
+    def _select(df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return pd.DataFrame(columns=["codigo_madre", "descripcion_madre", "clinica", "codigo_local", "descripcion_local"])
+        cols = [c for c in ["codigo_madre", "descripcion_madre", "clinica", "codigo_local", "descripcion_local"] if c in df.columns]
+        out = df.loc[:, cols].copy()
+        for needed in ["codigo_madre", "descripcion_madre", "clinica", "codigo_local", "descripcion_local"]:
+            if needed not in out.columns:
+                out[needed] = ""
+        return out
+
+    combined = pd.concat([_select(homologacion), _select(homologacion_insumos)], ignore_index=True)
+    if combined.empty:
+        return pd.DataFrame(columns=["codigo_madre", "descripcion_madre"])
+
+    combined["clinica"] = combined["clinica"].fillna("").map(lambda x: normalize_text(str(x)) if x else "")
+    combined.loc[combined["clinica"] == "", "clinica"] = "SIN_CLINICA"
+    combined["codigo_local"] = combined["codigo_local"].fillna("").map(lambda x: str(x).strip())
+    combined["descripcion_local"] = combined["descripcion_local"].fillna("").map(lambda x: str(x).strip())
+
+    def _clinic_col(clinica: str) -> str:
+        return normalize_text(clinica).replace(" ", "_") or "SIN_CLINICA"
+
+    clinics = sorted({_clinic_col(c) for c in combined["clinica"].tolist()})
+
+    def _join_unique(values: pd.Series) -> str:
+        items = [str(v).strip() for v in values.tolist() if v is not None and str(v).strip() != ""]
+        if not items:
+            return ""
+        unique = list(dict.fromkeys(items))
+        return "; ".join(unique)
+
+    agg = (
+        combined.groupby(["codigo_madre", "descripcion_madre", "clinica"], dropna=False, as_index=False)
+        .agg({"codigo_local": _join_unique, "descripcion_local": _join_unique})
+    )
+
+    rows: list[dict[str, str]] = []
+    for (codigo_madre, descripcion_madre), group in agg.groupby(["codigo_madre", "descripcion_madre"], dropna=False):
+        row: dict[str, str] = {
+            "codigo_madre": str(codigo_madre or "").strip(),
+            "descripcion_madre": str(descripcion_madre or "").strip(),
+        }
+        mapping = { _clinic_col(str(r["clinica"])): r for r in group.to_dict("records") }
+        for clinic in clinics:
+            info = mapping.get(clinic, {})
+            row[f"COD_{clinic}"] = str(info.get("codigo_local", "") or "")
+            row[f"DESC_{clinic}"] = str(info.get("descripcion_local", "") or "")
+        rows.append(row)
+
+    matrix = pd.DataFrame(rows)
+    matrix = matrix.sort_values(["codigo_madre", "descripcion_madre"], kind="stable").reset_index(drop=True)
+    return matrix
 
 
 def build_insumo_frames(records: list[ProductAttributes]) -> dict[str, pd.DataFrame]:

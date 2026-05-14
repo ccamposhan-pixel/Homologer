@@ -59,6 +59,7 @@ def test_workbook_contains_required_sheets() -> None:
         "NO_HOMOLOGAR",
         "DICCIONARIO_MARCAS",
         "ALERTAS",
+        "MATRIZ_HOMOLOGADOS_CLINICAS",
         "RESUMEN",
         "PATRONES_HISTORICOS_APRENDIDOS",
         "DICCIONARIO_INSUMOS",
