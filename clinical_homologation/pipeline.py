@@ -173,7 +173,9 @@ def process_products(
     product_df = read_table(product_path_or_file)
     report(12, "Resolviendo mapeo de columnas")
     mapping = resolve_mapping(list(product_df.columns), column_mapping)
-    mapping = refine_mapping_with_data(product_df, mapping)
+    # Only apply heuristics when the user didn't explicitly pick the code column.
+    if not (column_mapping or {}).get("codigo_origen"):
+        mapping = refine_mapping_with_data(product_df, mapping)
     report(18, "Cargando vademecum local")
     vademecum = load_vademecum(vademecum_path_or_file, vademecum_mapping) if vademecum_path_or_file else pd.DataFrame()
     report(21, "Leyendo homologaciones historicas auxiliares")
