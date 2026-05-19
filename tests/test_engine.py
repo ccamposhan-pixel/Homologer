@@ -61,6 +61,12 @@ def test_workbook_contains_required_sheets() -> None:
         "ALERTAS",
         "MATRIZ_HOMOLOGADOS_CLINICAS",
         "RESUMEN",
+        "MAESTRO_NORMALIZADO",
+        "GAPS_DETECTADOS",
+        "CANDIDATOS_HOMOLOGACION",
+        "OPORTUNIDADES_ECONOMICAS",
+        "VALIDACION_CLINICA",
+        "RESUMEN_ANALITICO",
         "PATRONES_HISTORICOS_APRENDIDOS",
         "DICCIONARIO_INSUMOS",
         "CONFLICTOS_HISTORICOS",
@@ -134,3 +140,37 @@ def test_historical_learning_outputs_patterns_and_conflicts(tmp_path) -> None:
     assert len(frames["PATRONES_HISTORICOS_APRENDIDOS"]) == 2
     assert not frames["DICCIONARIO_INSUMOS"].empty
     assert len(frames["CONFLICTOS_HISTORICOS"]) >= 1
+
+
+def test_analytics_detects_pack_factor_and_master_unit_gap(tmp_path) -> None:
+    products = tmp_path / "compras.xlsx"
+    pd.DataFrame(
+        [
+            {
+                "clinica": "A",
+                "codigo": "1",
+                "descripcion": "PARACETAMOL 500 MG CAJA X30 COMPRIMIDOS",
+                "unidad medida": "UN",
+                "precio unitario": 3000,
+                "cantidad comprada": 10,
+                "monto total": 30000,
+            },
+            {
+                "clinica": "B",
+                "codigo": "2",
+                "descripcion": "PARACETAMOL 500MG COMP CJ X 30",
+                "unidad medida": "CAJA",
+                "precio unitario": 4500,
+                "cantidad comprada": 5,
+                "monto total": 22500,
+            },
+        ]
+    ).to_excel(products, index=False)
+    frames = process_products(products)
+    master = frames["MAESTRO_NORMALIZADO"]
+    assert set(master["factor_conversion"]) == {30}
+    assert set(master["unidad_comparable_recomendada"]) == {"COMPRIMIDO"}
+    gaps = frames["GAPS_DETECTADOS"]
+    assert "Unidad de medida posiblemente erronea" in set(gaps["gap_detectado"])
+    candidates = frames["CANDIDATOS_HOMOLOGACION"]
+    assert len(candidates) == 1

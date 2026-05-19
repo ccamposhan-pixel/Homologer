@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping
 
 import pandas as pd
 
+from .analytics import build_supply_analytics_frames
 from .enrichment import build_brand_dictionary, dictionary_sheet, load_vademecum, read_table
 from .external_sources import isp_consultation_note, secondary_vademecum_note
 from .historical import load_historical_learning
@@ -46,11 +47,18 @@ DEFAULT_MAPPING = {
     "laboratorio_titular": ["laboratorio", "titular"],
     "unidad_compra": ["unidad de compra", "unidad_compra", "u compra"],
     "unidad_consumo": ["unidad de consumo", "unidad_consumo", "u consumo"],
+    "unidad_medida_maestro": ["unidad medida maestro", "unidad_medida_maestro", "unidad medida", "unidad_medida", "unidad maestro", "um maestro", "um", "uom"],
     "categoria": ["categoria", "rubro"],
+    "subcategoria": ["subcategoria", "sub categoria", "sub-categoria"],
     "familia": ["familia"],
     "registro_sanitario": ["registro sanitario", "registro", "isp"],
     "factor_conversion": ["factor", "factor conversion", "factor_conversion"],
     "precio": ["precio", "punit", "precio unitario", "valor"],
+    "cantidad_comprada": ["cantidad comprada", "cantidad_comprada", "cantidad", "qty", "q"],
+    "monto_total": ["monto total", "monto_total", "total", "importe total"],
+    "fecha_compra": ["fecha compra", "fecha_compra", "fecha"],
+    "bodega": ["bodega", "almacen", "almacenamiento"],
+    "cuenta_contable": ["cuenta contable", "cuenta_contable", "cuenta"],
 }
 
 
@@ -260,7 +268,10 @@ def _build_record(
     form = detect_form(normalized)
     brand = normalize_text(_value(row, mapping.get("marca"))) or first_token_brand(normalized)
     amount, ratio_concentration, ratio_volume = detect_dose_components(normalized)
-    family = detect_family(normalized, _value(row, mapping.get("familia")), _value(row, mapping.get("categoria")))
+    category_text = " ".join(
+        part for part in [_value(row, mapping.get("categoria")), _value(row, mapping.get("subcategoria"))] if part
+    )
+    family = detect_family(normalized, _value(row, mapping.get("familia")), category_text)
     record = ProductAttributes(
         clinica=normalize_text(_value(row, mapping.get("clinica"))),
         codigo_origen=_value(row, mapping.get("codigo_origen")) or str(row.name + 1),
@@ -276,8 +287,15 @@ def _build_record(
         presentacion=detect_presentation(normalized),
         unidad_compra=normalize_text(_value(row, mapping.get("unidad_compra"))),
         unidad_consumo=normalize_text(_value(row, mapping.get("unidad_consumo"))),
+        unidad_medida_maestro=normalize_text(_value(row, mapping.get("unidad_medida_maestro"))),
         factor_conversion=normalize_text(_value(row, mapping.get("factor_conversion"))),
         precio=normalize_text(_value(row, mapping.get("precio"))),
+        cantidad_comprada=normalize_text(_value(row, mapping.get("cantidad_comprada"))),
+        monto_total=normalize_text(_value(row, mapping.get("monto_total"))),
+        subcategoria=normalize_text(_value(row, mapping.get("subcategoria"))),
+        fecha_compra=normalize_text(_value(row, mapping.get("fecha_compra"))),
+        bodega=normalize_text(_value(row, mapping.get("bodega"))),
+        cuenta_contable=normalize_text(_value(row, mapping.get("cuenta_contable"))),
         laboratorio_titular=normalize_text(_value(row, mapping.get("laboratorio_titular"))),
         registro_sanitario=normalize_text(_value(row, mapping.get("registro_sanitario"))),
         alertas=detect_alerts(normalized),
@@ -542,6 +560,7 @@ def build_workbook_frames(records, proposals=None, vademecum=None, brand_diction
     insumo_frames = build_insumo_frames(insumo_records)
     resumen = build_multiclinic_summary(records, codigos_madre, homologacion, revision_qf, revision_logistica, no_homologar, insumo_frames)
     matriz_clinicas = build_homologation_matrix(homologacion, insumo_frames.get("HOMOLOGACION_INSUMOS", pd.DataFrame()))
+    analytics_frames = build_supply_analytics_frames(records)
     frames = {
         "CODIGOS_MADRE": codigos_madre,
         "HOMOLOGACION_MULTICLINICA": homologacion,
@@ -553,6 +572,7 @@ def build_workbook_frames(records, proposals=None, vademecum=None, brand_diction
         "MATRIZ_HOMOLOGADOS_CLINICAS": matriz_clinicas,
         "RESUMEN": resumen,
     }
+    frames.update(analytics_frames)
     frames.update(historical_frames)
     frames.update(insumo_frames)
     return frames
