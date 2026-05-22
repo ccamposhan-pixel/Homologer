@@ -171,8 +171,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_response(303)
         self.send_header("Location", next_path)
-        self.send_header("Set-Cookie", f"homologacion_auth={password}; Path=/; HttpOnly; SameSite=Lax")
+        self.send_header("Set-Cookie", f"homologacion_auth={password}; Path=/; HttpOnly; {self.auth_cookie_policy()}")
         self.end_headers()
+
+    def auth_cookie_policy(self) -> str:
+        host = self.headers.get("Host", "")
+        forwarded_proto = self.headers.get("X-Forwarded-Proto", "")
+        if host.endswith(".hf.space") or forwarded_proto == "https":
+            return "SameSite=None; Secure"
+        return "SameSite=Lax"
 
     def inspect_uploads(self) -> None:
         try:
