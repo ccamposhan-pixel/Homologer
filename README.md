@@ -48,3 +48,9 @@ No homologa automaticamente si cambia concentracion, forma farmaceutica, via, fa
 ```powershell
 python -m pytest
 ```
+
+## Despliegue sin pago
+
+Para una URL publica sin depender de Render, usar Hugging Face Spaces con SDK `Docker`.
+
+Ver [DEPLOY_HUGGINGFACE.md](DEPLOY_HUGGINGFACE.md).
