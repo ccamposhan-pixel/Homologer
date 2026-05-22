@@ -1,3 +1,10 @@
+---
+title: Homologer
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Agente de homologacion clinica para Chile
 
 App local y motor Python para homologar bases de productos clinicos, farmaceuticos e insumos medicos con una regla conservadora: falsos negativos antes que falsos positivos.
